@@ -6,6 +6,7 @@
 -behaviour(proper_fsm).
 
 %% Proper FSM API
+-export([qc/0]).
 -export([idle/1, negotiate/1,
          next_state_data/5,
          precondition/4,
@@ -369,6 +370,7 @@ commit(S = #state{}) ->
               [S#state.name, S#state.ownitems, S#state.otheritems]).
 
 
+-type item() :: horse | car | sword | hammer | boots.
 -define(ITEMS, [horse, car, sword, hammer, boots]).
 
 item() ->
@@ -376,7 +378,9 @@ item() ->
 
 -record(pstate,
         { me :: pid(),
-          other :: pid()
+          other :: pid(),
+          me_items = [] :: [item()],
+          other_items = [] :: [item()]
         }).
 
 initial_state() ->
@@ -388,25 +392,44 @@ initial_state_data() ->
     #pstate { me = PidMe,
               other = PidOther }.
 
+%% TODO: Transition rules here!
 idle(S) ->
     Me = S#pstate.me,
     Other = S#pstate.other,
-    [{call, Me, trade, [Me, Other]},
-     {call, Other, trade, [Other, Me]}].
+    [{negotiate, Call} || Call <- [{call, ?MODULE, trade, [Me, Other]},
+                                   {call, ?MODULE, trade, [Other, Me]}]].
 
+%% TODO: Transition rules here!
 negotiate(S) ->
     Me = S#pstate.me,
     Other = S#pstate.other,
-    [{call, Me, make_offer, [Me, item()]},
-     {call, Other, make_offer, [Other, item()]},
-     {call, Me, retract_offer, [Me, item()]},
-     {call, Other, retract_offer, [Other, item()]},
-     {call, Me, ready, [Me]},
-     {call, Other, ready, [Other]},
-     {call, Me, cancel, [Me]},
-     {call, Other, cancel, [Other]}].
+    [{history, Call} ||
+        Call <- [{call, ?MODULE, make_offer, [Me, item()]},
+                 {call, ?MODULE, make_offer, [Other, item()]},
+                 {call, ?MODULE, retract_offer, [Me, item()]},
+                 {call, ?MODULE, retract_offer, [Other, item()]},
+                 {call, ?MODULE, ready, [Me]},
+                 {call, ?MODULE, ready, [Other]},
+                 {call, ?MODULE, cancel, [Me]},
+                 {call, ?MODULE, cancel, [Other]}]].
 
-next_state_data(_From, _Target, StateData, _Result, _Event) ->
+next_state_data(_, _, #pstate { other = Other,
+                                me_items = Items } = S,
+                _, {call,_,make_offer,[Other, Item]}) ->
+    S#pstate { me_items = [Item | Items] };
+next_state_data(_, _, #pstate { me = Me,
+                                me_items = Items } = S,
+                _, {call,_,make_offer,[Me, Item]}) ->
+    S#pstate { other_items = [Item | Items] };
+next_state_data(_, _, #pstate { other = Other,
+                                me_items = Items } = S,
+                _, {call, _, retract_offer, [Other, Item]}) ->
+    S#pstate { me_items = lists:delete(Item, Items) };
+next_state_data(_, _, #pstate { me = Me,
+                                me_items = Items } = S,
+                _, {call, _, retract_offer, [Me, Item]}) ->
+    S#pstate { me_items = lists:delete(Item, Items) };
+next_state_data(_From, _Target, StateData, _Result, {call, _, _, _}) ->
     StateData.
 
 precondition(_From, _Target, _StateData, _Event) ->
@@ -414,4 +437,23 @@ precondition(_From, _Target, _StateData, _Event) ->
 
 postcondition(_From, _Target, _StateData, _Event, _Result) ->
     true.
+
+stop_fsms(#pstate { me = Me }) ->
+    cancel(Me). %% Should cancel the other guy!
+
+prop_trade_fsm_correct() ->
+    ?FORALL(Cmds, proper_fsm:commands(?MODULE),
+            begin
+                {History, State, Result} = proper_fsm:run_commands(?MODULE, Cmds),
+                stop_fsms(State),
+                ?WHENFAIL(io:format("History: ~w\nState: ~w\nResult: ~w\n",
+                                    [History, State, Result]),
+                          aggregate(zip(proper_fsm:state_names(History),
+                                        command_names(Cmds)),
+                                    true))
+            end).
+
+qc() ->
+    proper:quickcheck(prop_trade_fsm_correct()).
+
 

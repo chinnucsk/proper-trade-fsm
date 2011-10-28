@@ -1,0 +1,12 @@
+{application, trade_fsm,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { trade_fsm_app, []}},
+  {env, []}
+ ]}.
