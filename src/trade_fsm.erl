@@ -7,7 +7,8 @@
 
 %% Proper FSM API
 -export([qc/0]).
--export([idle/1, negotiate/1,
+-export([idle/1, idle_wait/1, negotiate/1,
+         async_trade/2, trade_unblocked/1,
          next_state_data/5,
          precondition/4,
          postcondition/5,
@@ -370,79 +371,85 @@ commit(S = #state{}) ->
               [S#state.name, S#state.ownitems, S#state.otheritems]).
 
 
+-type p_fsm_state() :: idle | idle_wait | negotiate.
 -type item() :: horse | car | sword | hammer | boots.
 -define(ITEMS, [horse, car, sword, hammer, boots]).
+
+async_trade(OwnPid, OtherPid) ->
+    Key = rpc:async_call(node(), ?MODULE, trade, [OwnPid, OtherPid]),
+    {ok, Key}.
+
+trade_unblocked(Key) ->
+    case rpc:nb_yield(Key, 5000) of
+        {value, V} ->
+            {ok, V};
+        timeout ->
+            {error, deadlock}
+    end.
 
 item() ->
     elements(?ITEMS).
 
 -record(pstate,
-        { me :: pid(),
-          other :: pid(),
+        { a :: pid(),
+          a_block = undefined :: pid() | undefined,
+          b :: pid(),
+          b_block = undefined :: pid() | undefined,
           me_items = [] :: [item()],
           other_items = [] :: [item()]
         }).
 
+-spec initial_state() -> p_fsm_state().
 initial_state() ->
     idle.
 
 initial_state_data() ->
-    {ok, PidMe}    = trade_fsm:start_link("Me"),
-    {ok, PidOther} = trade_fsm:start_link("Other"), 
-    #pstate { me = PidMe,
-              other = PidOther }.
+    {ok, A}    = trade_fsm:start_link("Me"),
+    {ok, B} = trade_fsm:start_link("Other"), 
+    #pstate { a = A, b = B }.
 
-%% TODO: Transition rules here!
 idle(S) ->
-    Me = S#pstate.me,
-    Other = S#pstate.other,
-    [{negotiate, Call} || Call <- [{call, ?MODULE, trade, [Me, Other]},
-                                   {call, ?MODULE, trade, [Other, Me]}]].
+    A = S#pstate.a,
+    B = S#pstate.b,
+    [{idle_wait,  {call, ?MODULE, async_trade, [A, B]}}].
 
-%% TODO: Transition rules here!
+idle_wait(#pstate { b = B}) ->
+    [{negotiate, {call, ?MODULE, accept_trade, [B]}}].
+
 negotiate(S) ->
-    Me = S#pstate.me,
-    Other = S#pstate.other,
+    A = S#pstate.a,
     [{history, Call} ||
-        Call <- [{call, ?MODULE, make_offer, [Me, item()]},
-                 {call, ?MODULE, make_offer, [Other, item()]},
-                 {call, ?MODULE, retract_offer, [Me, item()]},
-                 {call, ?MODULE, retract_offer, [Other, item()]},
-                 {call, ?MODULE, ready, [Me]},
-                 {call, ?MODULE, ready, [Other]},
-                 {call, ?MODULE, cancel, [Me]},
-                 {call, ?MODULE, cancel, [Other]}]].
+        Call <- [{call, ?MODULE, make_offer, [A, item()]}]].
 
-next_state_data(_, _, #pstate { other = Other,
-                                me_items = Items } = S,
-                _, {call,_,make_offer,[Other, Item]}) ->
-    S#pstate { me_items = [Item | Items] };
-next_state_data(_, _, #pstate { me = Me,
-                                me_items = Items } = S,
-                _, {call,_,make_offer,[Me, Item]}) ->
-    S#pstate { other_items = [Item | Items] };
-next_state_data(_, _, #pstate { other = Other,
-                                me_items = Items } = S,
-                _, {call, _, retract_offer, [Other, Item]}) ->
-    S#pstate { me_items = lists:delete(Item, Items) };
-next_state_data(_, _, #pstate { me = Me,
-                                me_items = Items } = S,
-                _, {call, _, retract_offer, [Me, Item]}) ->
-    S#pstate { me_items = lists:delete(Item, Items) };
+                 %% {call, ?MODULE, make_offer, [Other, item()]}]].
+                 %% {call, ?MODULE, retract_offer, [Me, item()]},
+                 %% {call, ?MODULE, retract_offer, [Other, item()]},
+                 %% {call, ?MODULE, ready, [Me]},
+                 %% {call, ?MODULE, ready, [Other]},
+                 %% {call, ?MODULE, cancel, [Me]},
+                 %% {call, ?MODULE, cancel, [Other]}]].
+
+next_state_data(idle, idle_wait, PState, {ok, Key},
+                {call, _, async_trade, _}) ->
+    PState#pstate { a_block = Key };
 next_state_data(_From, _Target, StateData, _Result, {call, _, _, _}) ->
     StateData.
 
+
+precondition(_, idle_wait_me, _, {call, _, trade, _}) ->
+    true;
 precondition(_From, _Target, _StateData, _Event) ->
-    true.
+    false.
 
 postcondition(_From, _Target, _StateData, _Event, _Result) ->
     true.
 
-stop_fsms(#pstate { me = Me }) ->
-    cancel(Me). %% Should cancel the other guy!
+stop_fsms({_State, #pstate { a = A }}) ->
+    cancel(A). %% Should cancel the other guy!
 
 prop_trade_fsm_correct() ->
     ?FORALL(Cmds, proper_fsm:commands(?MODULE),
+            ?TRAPEXIT(
             begin
                 {History, State, Result} = proper_fsm:run_commands(?MODULE, Cmds),
                 stop_fsms(State),
@@ -451,7 +458,7 @@ prop_trade_fsm_correct() ->
                           aggregate(zip(proper_fsm:state_names(History),
                                         command_names(Cmds)),
                                     true))
-            end).
+            end)).
 
 qc() ->
     proper:quickcheck(prop_trade_fsm_correct()).
