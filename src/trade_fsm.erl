@@ -8,7 +8,7 @@
 %% Proper FSM API
 -export([qc/0]).
 -export([idle/1, idle_wait/1, negotiate/1,
-         async_trade/2, trade_unblocked/1,
+         async_trade/2, unblock/1,
          next_state_data/5,
          precondition/4,
          postcondition/5,
@@ -379,7 +379,7 @@ async_trade(OwnPid, OtherPid) ->
     Key = rpc:async_call(node(), ?MODULE, trade, [OwnPid, OtherPid]),
     {ok, Key}.
 
-trade_unblocked(Key) ->
+unblock(Key) ->
     case rpc:nb_yield(Key, 5000) of
         {value, V} ->
             {ok, V};
@@ -436,13 +436,29 @@ next_state_data(_From, _Target, StateData, _Result, {call, _, _, _}) ->
     StateData.
 
 
-precondition(_, idle_wait_me, _, {call, _, trade, _}) ->
+precondition(idle, idle_wait, _, {call, _, async_trade, _}) ->
     true;
+precondition(idle_wait, negotiate,
+             #pstate { a_block = R}, {call, _, accept_trade, _}) ->
+    R /= undefined;
 precondition(_From, _Target, _StateData, _Event) ->
     false.
 
+postcondition(idle, idle_wait, _, {call, _, async_trade, _}, _) ->
+    true;
+postcondition(idle_wait, negotiate, #pstate { a_block = undefined },
+              {call, _, accept_trade, _}, ok) ->
+    false;
+postcondition(idle_wait, negotiate, #pstate { a_block = K },
+              {call, _, accept_trade, _}, ok) ->
+    case unblock(K) of
+        {ok, ok} ->
+            true;
+        {error, deadlock} ->
+            false
+    end;
 postcondition(_From, _Target, _StateData, _Event, _Result) ->
-    true.
+    false.
 
 stop_fsms({_State, #pstate { a = A }}) ->
     cancel(A). %% Should cancel the other guy!
