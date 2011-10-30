@@ -308,10 +308,13 @@ handle_event(Event, StateName, Data) ->
 
 %% This cancel event comes from the client. We must warn the other
 %% player that we have a quitter!
+handle_sync_event(cancel, _From, _StateName, #state { other = undefined } = S) ->
+    notice(S, "cancelling trade, no other party to notify_cancel", []),
+    {stop, normal, ok, S};
 handle_sync_event(cancel, _From, _StateName, S = #state{}) ->
     notify_cancel(S#state.other),
     notice(S, "cancelling trade, sending cancel event", []),
-    {stop, cancelled, ok, S};
+    {stop, normal, ok, S};
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
 handle_sync_event(Event, _From, StateName, Data) ->
     unexpected(Event, StateName),
