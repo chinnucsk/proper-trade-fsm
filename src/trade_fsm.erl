@@ -463,7 +463,7 @@ postcondition(idle_wait, negotiate, #pstate { a_block = K },
 postcondition(_From, _Target, _StateData, _Event, _Result) ->
     false.
 
-stop_fsms({_State, #pstate { a = A }}) ->
+stop_fsms({_State, #pstate { a = A }}) when is_pid(A) ->
     cancel(A). %% Should cancel the other guy!
 
 prop_trade_fsm_correct() ->
