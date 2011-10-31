@@ -11,7 +11,7 @@
 
 %% API
 -export([start_link/0, trade/1, accept_trade/0, make_offer/1,
-         retract_offer/1, ready/0, cancel/0]).
+         retract_offer/1, ready/0, cancel/0, unblock/0, unblock/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -61,6 +61,12 @@ ready() ->
 cancel() ->
     call(cancel).
 
+unblock() ->
+    unblock(5000).
+
+unblock(Timeout) ->
+    call({unblock, Timeout}).
+
 %%%===================================================================
 
 %% @private
@@ -69,6 +75,12 @@ init([]) ->
     {ok, #state{ fsm = Pid }}.
 
 %% @private
+handle_call({unblock, Timeout}, _From, #state { key = K } = State) ->
+    Reply = rpc:nb_yield(K, Timeout),
+    {reply, Reply, State#state { key = case Reply of
+                                           timeout -> K;
+                                           {value, _} -> undefined
+                                       end }};
 handle_call(accept_trade, _From, State) ->
     Reply = direct_call(accept_trade, [], State),
     {reply, Reply, State};
