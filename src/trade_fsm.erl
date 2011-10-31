@@ -1,19 +1,6 @@
 -module(trade_fsm).
 -behaviour(gen_fsm).
 
--include_lib("proper/include/proper.hrl").
--include_lib("eunit/include/eunit.hrl").
--behaviour(proper_fsm).
-
-%% Proper FSM API
--export([qc/0]).
--export([idle/1, idle_wait/1, negotiate/1,
-         async_trade/2, unblock/1,
-         next_state_data/5,
-         precondition/4,
-         postcondition/5,
-         initial_state/0, initial_state_data/0]).
-
 %% public API
 -export([start/1, start_link/1, trade/2, accept_trade/1, 
          make_offer/2, retract_offer/2, ready/1, cancel/1]).
@@ -301,7 +288,7 @@ ready(Event, _From, Data) ->
 %% stop whatever we're doing and shut down!
 handle_event(cancel, _StateName, S=#state{}) ->
     notice(S, "received cancel event", []),
-    {stop, other_cancelled, S};
+    {stop, normal, S};
 handle_event(Event, StateName, Data) ->
     unexpected(Event, StateName),
     {next_state, StateName, Data}.
@@ -311,8 +298,8 @@ handle_event(Event, StateName, Data) ->
 handle_sync_event(cancel, _From, _StateName, #state { other = undefined } = S) ->
     notice(S, "cancelling trade, no other party to notify_cancel", []),
     {stop, normal, ok, S};
-handle_sync_event(cancel, _From, _StateName, S = #state{}) ->
-    notify_cancel(S#state.other),
+handle_sync_event(cancel, _From, _StateName, S = #state { other = Other}) ->
+    notify_cancel(Other),
     notice(S, "cancelling trade, sending cancel event", []),
     {stop, normal, ok, S};
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
@@ -372,114 +359,5 @@ commit(S = #state{}) ->
               "This operation should have some atomic save "
               "in a database.~n",
               [S#state.name, S#state.ownitems, S#state.otheritems]).
-
-
--type p_fsm_state() :: idle | idle_wait | negotiate.
--type item() :: horse | car | sword | hammer | boots.
--define(ITEMS, [horse, car, sword, hammer, boots]).
-
-async_trade(OwnPid, OtherPid) ->
-    Key = rpc:async_call(node(), ?MODULE, trade, [OwnPid, OtherPid]),
-    {ok, Key}.
-
-unblock(Key) ->
-    case rpc:nb_yield(Key, 5000) of
-        {value, V} ->
-            {ok, V};
-        timeout ->
-            {error, deadlock}
-    end.
-
-item() ->
-    elements(?ITEMS).
-
--record(pstate,
-        { a :: pid(),
-          a_block = undefined :: pid() | undefined,
-          b :: pid(),
-          b_block = undefined :: pid() | undefined,
-          me_items = [] :: [item()],
-          other_items = [] :: [item()]
-        }).
-
--spec initial_state() -> p_fsm_state().
-initial_state() ->
-    idle.
-
-initial_state_data() ->
-    {ok, A}    = trade_fsm:start_link("Me"),
-    {ok, B} = trade_fsm:start_link("Other"), 
-    #pstate { a = A, b = B }.
-
-idle(S) ->
-    A = S#pstate.a,
-    B = S#pstate.b,
-    [{idle_wait,  {call, ?MODULE, async_trade, [A, B]}}].
-
-idle_wait(#pstate { b = B}) ->
-    [{negotiate, {call, ?MODULE, accept_trade, [B]}}].
-
-negotiate(S) ->
-    A = S#pstate.a,
-    [{history, Call} ||
-        Call <- [{call, ?MODULE, make_offer, [A, item()]}]].
-
-                 %% {call, ?MODULE, make_offer, [Other, item()]}]].
-                 %% {call, ?MODULE, retract_offer, [Me, item()]},
-                 %% {call, ?MODULE, retract_offer, [Other, item()]},
-                 %% {call, ?MODULE, ready, [Me]},
-                 %% {call, ?MODULE, ready, [Other]},
-                 %% {call, ?MODULE, cancel, [Me]},
-                 %% {call, ?MODULE, cancel, [Other]}]].
-
-next_state_data(idle, idle_wait, PState, {ok, Key},
-                {call, _, async_trade, _}) ->
-    PState#pstate { a_block = Key };
-next_state_data(_From, _Target, StateData, _Result, {call, _, _, _}) ->
-    StateData.
-
-
-precondition(idle, idle_wait, _, {call, _, async_trade, _}) ->
-    true;
-precondition(idle_wait, negotiate,
-             #pstate { a_block = R}, {call, _, accept_trade, _}) ->
-    R /= undefined;
-precondition(_From, _Target, _StateData, _Event) ->
-    false.
-
-postcondition(idle, idle_wait, _, {call, _, async_trade, _}, _) ->
-    true;
-postcondition(idle_wait, negotiate, #pstate { a_block = undefined },
-              {call, _, accept_trade, _}, ok) ->
-    false;
-postcondition(idle_wait, negotiate, #pstate { a_block = K },
-              {call, _, accept_trade, _}, ok) ->
-    case unblock(K) of
-        {ok, ok} ->
-            true;
-        {error, deadlock} ->
-            false
-    end;
-postcondition(_From, _Target, _StateData, _Event, _Result) ->
-    false.
-
-stop_fsms({_State, #pstate { a = A }}) when is_pid(A) ->
-    cancel(A). %% Should cancel the other guy!
-
-prop_trade_fsm_correct() ->
-    ?FORALL(Cmds, proper_fsm:commands(?MODULE),
-            ?TRAPEXIT(
-            begin
-                {History, State, Result} = proper_fsm:run_commands(?MODULE, Cmds),
-                stop_fsms(State),
-                ?WHENFAIL(io:format("History: ~w\nState: ~w\nResult: ~w\n",
-                                    [History, State, Result]),
-                          aggregate(zip(proper_fsm:state_names(History),
-                                        command_names(Cmds)),
-                                    true))
-            end)).
-
-qc() ->
-    proper:quickcheck(prop_trade_fsm_correct()).
 
 
