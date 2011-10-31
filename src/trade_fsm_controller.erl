@@ -10,13 +10,15 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, trade/1]).
+-export([start_link/0, trade/1, accept_trade/0, make_offer/1,
+         retract_offer/1, ready/0, cancel/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE). 
+-define(TRADE_FSM, trade_fsm).
 
 -record(state, {
           fsm = undefined :: undefined | pid(),
@@ -32,7 +34,32 @@ start_link() ->
 %% @doc Instruct the trade_fsm to trade
 %% @end
 trade(Trader) ->
-    gen_server:cast(?MODULE, {trade, Trader}).
+    call({trade, Trader}).
+
+%% @doc Accept the trade connection
+%% @end
+accept_trade() ->
+    call(accept_trade).
+
+%% @doc Make an offer
+%% @end
+make_offer(Item) ->
+    cast({propagate, make_offer, Item}).
+
+%% @doc Retract an offer
+%% @end
+retract_offer(Item) ->
+    cast({propagate, retract_offer, Item}).
+
+%% @doc Tell the other end we are ready
+%% @end
+ready() ->
+    call(ready).
+
+%% @doc Tell the other end to call
+%% @end
+cancel() ->
+    call(cancel).
 
 %%%===================================================================
 
@@ -42,14 +69,26 @@ init([]) ->
     {ok, #state{ fsm = Pid }}.
 
 %% @private
+handle_call(accept_trade, _From, State) ->
+    Reply = direct_call(accept_trade, [], State),
+    {reply, Reply, State};
+handle_call(cancel, _From, #state { key = undefined } = State) ->
+    Key = async_call(cancel, [], State),
+    {reply, ok, State#state { key = Key } };
+handle_call(ready, _From, #state { key = undefined } = State) ->
+    Key = async_call(ready, [], State),
+    {reply, ok, State#state { key = Key } };
+handle_call({trade, Trader}, _From, #state { key = undefined } = State) ->
+    Key = async_call(trade, [Trader], State),
+    {reply, ok, State#state { key = Key } };
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
 %% @private
-handle_cast({trade, Trader}, State) ->
-    Key = async_call(trade, [Trader], State),
-    {noreply, State#state { key = Key }};
+handle_cast({propagate, Cmd, Item}, State) ->
+    direct_call(Cmd, [Item], State),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -66,6 +105,17 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %%%===================================================================
-async_call(F, Args, #state { fsm = Pid }) when is_pid(Pid) ->
-    rpc:async_call(node(), trade_fsm, F, [Pid | Args]).
+async_call(F, Args, #state { fsm = Pid })
+  when is_pid(Pid) ->
+    rpc:async_call(node(), ?TRADE_FSM, F, [Pid | Args]).
+
+direct_call(F, Args, #state { fsm = Pid })
+  when is_pid(Pid) ->
+    apply(?TRADE_FSM, F, [Pid | Args]).
+
+call(M) ->
+    gen_server:call(?MODULE, M, infinity).
+
+cast(M) ->
+    gen_server:call(?MODULE, M).
 
