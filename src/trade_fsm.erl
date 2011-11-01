@@ -109,7 +109,7 @@ notify_cancel(OtherPid) ->
 
 %%% GEN_FSM API
 init(Name) ->
-    {ok, idle, #state{name=Name}}. 
+    {ok, idle, #state { name = Name } }. 
 
 
 %% idle state is the state before any trade is done.

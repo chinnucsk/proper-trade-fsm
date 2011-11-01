@@ -73,6 +73,10 @@ unblock(Timeout) ->
 stop() ->
     cast(stop).
 
+%% API
+accept_negotiate(Other) ->
+    cast({accept_negotiate, Other}).
+
 %%%===================================================================
 
 %% @private
@@ -106,6 +110,9 @@ handle_call(_Request, _From, State) ->
 %% @private
 handle_cast({propagate, Cmd, Item}, State) ->
     direct_call(Cmd, [Item], State),
+    {noreply, State};
+handle_cast({accept_negotiate, CallbackPid}, #state { fsm = Pid} = State) ->
+    trade_fsm:accept_negotiate(Pid, CallbackPid),
     {noreply, State};
 handle_cast(stop, State) ->
     trade_fsm:stop(),

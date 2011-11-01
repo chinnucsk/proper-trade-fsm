@@ -101,11 +101,15 @@ do_connect() ->
     ok = trade_fsm_controller:trade({trade_fsm_proper, trade_mock}),
     expect_in(ask_negotiate).
 
+do_accept() ->
+    trade_fsm_controller:accept_negotiate(trade_fsm_proper_controller),
+    trade_fsm_controller:unblock().
+
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
 
 idle_wait(_S) ->
-    [].
+    [{negotiate, {call, ?MODULE, do_accept, []}}].
 
 negotiate(_S) ->
     [].
