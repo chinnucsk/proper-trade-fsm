@@ -46,10 +46,10 @@ initial_state_data() ->
 
 
 start() ->
-    ok.
+    {ok, _} = trade_fsm_controller:start_link().
 
 stop() ->
-    ok.
+    ok = trade_fsm_controller:stop().
 
 prop_trade_fsm_correct() ->
     ?FORALL(Cmds, proper_fsm:commands(?MODULE),

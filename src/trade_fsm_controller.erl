@@ -10,8 +10,11 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, trade/1, accept_trade/0, make_offer/1,
-         retract_offer/1, ready/0, cancel/0, unblock/0, unblock/1]).
+-export([start_link/0,
+         stop/0,
+         unblock/0, unblock/1,
+         trade/1, accept_trade/0, make_offer/1,
+         retract_offer/1, ready/0, cancel/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -67,6 +70,9 @@ unblock() ->
 unblock(Timeout) ->
     call({unblock, Timeout}).
 
+stop() ->
+    cast(stop).
+
 %%%===================================================================
 
 %% @private
@@ -101,6 +107,9 @@ handle_call(_Request, _From, State) ->
 handle_cast({propagate, Cmd, Item}, State) ->
     direct_call(Cmd, [Item], State),
     {noreply, State};
+handle_cast(stop, State) ->
+    trade_fsm:stop(),
+    {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
