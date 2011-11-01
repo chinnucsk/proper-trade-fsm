@@ -11,6 +11,10 @@
          idle/2, idle/3, idle_wait/2, idle_wait/3, negotiate/2,
          negotiate/3, wait/2, ready/2, ready/3]).
 
+-export([ask_negotiate/2, accept_negotiate/2, do_offer/2, undo_offer/2,
+         are_you_ready/1, not_yet/1, am_ready/1, ack_trans/1,
+         ask_commit/1, do_commit/1, notify_cancel/1]).
+
 -record(state, {name="",
                 other,
                 ownitems=[],
@@ -26,8 +30,10 @@ start_link(Name) ->
     gen_fsm:start_link(?MODULE, [Name], []).
 
 %% ask for a begin session. Returns when/if the other accepts
-trade(OwnPid, OtherPid) ->
-    gen_fsm:sync_send_event(OwnPid, {negotiate, OtherPid}, 30000).
+trade(OwnPid, OtherPid) when is_pid(OtherPid) ->
+    trade(OwnPid, {trade_fsm, OtherPid});
+trade(OwnPid, {Mod, Pid} = Other) when is_atom(Mod), is_pid(Pid) ->
+    gen_fsm:sync_send_event(OwnPid, {negotiate, Other}, 30000).
 
 %% Accept someone's trade offer.
 accept_trade(OwnPid) ->
@@ -57,7 +63,7 @@ cancel(OwnPid) ->
 
 %% Ask the other FSM for a trade session
 ask_negotiate(OtherPid, OwnPid) ->
-    gen_fsm:send_event(OtherPid, {ask_negotiate, OwnPid}).
+    gen_fsm:send_event(OtherPid, {ask_negotiate, OwnPid, ?MODULE}).
 
 %% Forward the client message accepting the transaction
 accept_negotiate(OtherPid, OwnPid) ->
@@ -110,21 +116,22 @@ init(Name) ->
 %% The other player asks for a negotiation. We basically
 %% only wait for our own user to accept the trade,
 %% and store the other's Pid for future uses
-idle({ask_negotiate, OtherPid}, S=#state{}) ->
+idle({ask_negotiate, OtherPid, OtherMod}, S=#state{}) ->
     Ref = monitor(process, OtherPid),
     notice(S, "~p asked for a trade negotiation", [OtherPid]),
-    {next_state, idle_wait, S#state{other=OtherPid, monitor=Ref}};
+    {next_state, idle_wait, S#state{other={OtherMod, OtherPid}, monitor=Ref}};
 idle(Event, Data) ->
     unexpected(Event, idle),
     {next_state, idle, Data}.
 
 %% trade call coming from the user. Forward to the other side,
 %% forward it and store the other's Pid
-idle({negotiate, OtherPid}, From, S=#state{}) ->
-    ask_negotiate(OtherPid, self()),
+idle({negotiate, {OtherMod, OtherPid}}, From, S=#state{}) ->
+    OtherMod:ask_negotiate(OtherPid, self()),
     notice(S, "asking user ~p for a trade", [OtherPid]),
     Ref = monitor(process, OtherPid),
-    {next_state, idle_wait, S#state{other=OtherPid, monitor=Ref, from=From}};
+    {next_state, idle_wait, S#state{other={OtherMod, OtherPid},
+                                    monitor=Ref, from=From}};
 idle(Event, _From, Data) ->
     unexpected(Event, idle),
     {next_state, idle, Data}.
@@ -135,12 +142,12 @@ idle(Event, _From, Data) ->
 %% the other side asked for a negotiation while we asked for it too.
 %% this means both definitely agree to the idea of doing a trade.
 %% Both sides can assume the other feels the same!
-idle_wait({ask_negotiate, OtherPid}, S=#state{other=OtherPid}) ->
+idle_wait({ask_negotiate, OtherPid, OtherMod}, S=#state{other={_, OtherPid}}) ->
     gen_fsm:reply(S#state.from, ok),
     notice(S, "starting negotiation", []),
-    {next_state, negotiate, S};
+    {next_state, negotiate, S#state { other = {OtherMod, OtherPid} }};
 %% The other side has accepted our offer. Move to negotiate state
-idle_wait({accept_negotiate, OtherPid}, S=#state{other=OtherPid}) ->
+idle_wait({accept_negotiate, OtherPid}, #state { other = {_, OtherPid } } = S) ->
     gen_fsm:reply(S#state.from, ok),
     notice(S, "starting negotiation", []),
     {next_state, negotiate, S};
@@ -151,8 +158,8 @@ idle_wait(Event, Data) ->
 
 %% Our own client has decided to accept the transaction.
 %% Make the other FSM aware of it and move to negotiate state.
-idle_wait(accept_negotiate, _From, S=#state{other=OtherPid}) ->
-    accept_negotiate(OtherPid, self()),
+idle_wait(accept_negotiate, _From, S=#state{other={OtherMod, OtherPid}}) ->
+    OtherMod:accept_negotiate(OtherPid, self()),
     notice(S, "accepting negotiation", []),
     {reply, ok, negotiate, S};
 idle_wait(Event, _From, Data) ->
@@ -160,13 +167,15 @@ idle_wait(Event, _From, Data) ->
     {next_state, idle_wait, Data}.
 
 %% own side offering an item
-negotiate({make_offer, Item}, S=#state{ownitems=OwnItems}) ->
-    do_offer(S#state.other, Item),
+negotiate({make_offer, Item}, S=#state{other = {OtherMod, OtherPid},
+                                       ownitems = OwnItems}) ->
+    OtherMod:do_offer(OtherPid, Item),
     notice(S, "offering ~p", [Item]),
     {next_state, negotiate, S#state{ownitems=add(Item, OwnItems)}};
 %% Own side retracting an item offer
-negotiate({retract_offer, Item}, S=#state{ownitems=OwnItems}) ->
-    undo_offer(S#state.other, Item),
+negotiate({retract_offer, Item}, S=#state{other = {OtherMod, OtherPid},
+                                          ownitems = OwnItems}) ->
+    OtherMod:undo_offer(OtherPid, Item),
     notice(S, "cancelling offer on ~p", [Item]),
     {next_state, negotiate, S#state{ownitems=remove(Item, OwnItems)}};
 %% other side offering an item
@@ -179,13 +188,13 @@ negotiate({undo_offer, Item}, S=#state{otheritems=OtherItems}) ->
     {next_state, negotiate, S#state{otheritems=remove(Item, OtherItems)}};
 %% Other side has declared itself ready. Our own FSM should tell it to
 %% wait (with not_yet/1).
-negotiate(are_you_ready, S=#state{other=OtherPid}) ->
+negotiate(are_you_ready, S=#state{other={OtherMod, OtherPid}}) ->
     io:format("Other user ready to trade.~n"),
     notice(S,
            "Other user ready to transfer goods:~n"
            "You get ~p, The other side gets ~p",
            [S#state.otheritems, S#state.ownitems]),
-    not_yet(OtherPid),
+    OtherMod:not_yet(OtherPid),
     {next_state, negotiate, S};
 negotiate(Event, Data) ->
     unexpected(Event, negotiate),
@@ -194,8 +203,8 @@ negotiate(Event, Data) ->
 %% own user mentioning he is ready. Next state should be wait
 %% and we add the 'from' to the state so we can reply to the
 %% user once ready.
-negotiate(ready, From, S = #state{other=OtherPid}) ->
-    are_you_ready(OtherPid),
+negotiate(ready, From, S = #state{other = {OtherMod, OtherPid}}) ->
+    OtherMod:are_you_ready(OtherPid),
     notice(S, "asking if ready, waiting", []),
     {next_state, wait, S#state{from=From}};
 negotiate(Event, _From, S) ->
@@ -220,8 +229,8 @@ wait({undo_offer, Item}, S=#state{otheritems=OtherItems}) ->
 %% However, the other client could have moved out of wait state already.
 %% Because of this, we send that we indeed are 'ready!' and hope for them
 %% to do the same.
-wait(are_you_ready, S=#state{}) ->
-    am_ready(S#state.other),
+wait(are_you_ready, S=#state{ other = {OtherMod, OtherPid} }) ->
+    OtherMod:am_ready(OtherPid),
     notice(S, "asked if ready, and I am. Waiting for same reply", []),
     {next_state, wait, S};
 %% The other client is not ready to trade yet. We keep waiting
@@ -232,9 +241,9 @@ wait(not_yet, S = #state{}) ->
 %% The other client was waiting for us! Let's reply to ours and
 %% send the ack message for the commit initiation on the other end.
 %% We can't go back after this.
-wait('ready!', S=#state{}) ->
-    am_ready(S#state.other),
-    ack_trans(S#state.other),
+wait('ready!', S=#state{ other = {OtherMod, OtherPid} }) ->
+    OtherMod:am_ready(OtherPid),
+    OtherMod:ack_trans(OtherPid),
     gen_fsm:reply(S#state.from, ok),
     notice(S, "other side is ready. Moving to ready state", []),
     {next_state, ready, S};
@@ -247,14 +256,14 @@ wait(Event, Data) ->
 %% commit or if the other side should.
 %% A successful commit (if we initiated it) could be done
 %% in the terminate function or any other before.
-ready(ack, S=#state{}) ->
-    case priority(self(), S#state.other) of
+ready(ack, S=#state{ other = {OtherMod, OtherPid} }) ->
+    case priority(self(), OtherPid) of
         true ->
             try 
                 notice(S, "asking for commit", []),
-                ready_commit = ask_commit(S#state.other),
+                ready_commit = OtherMod:ask_commit(OtherPid),
                 notice(S, "ordering commit", []),
-                ok = do_commit(S#state.other),
+                ok = OtherMod:do_commit(OtherPid),
                 notice(S, "committing...", []),
                 commit(S),
                 {stop, normal, S}
@@ -298,8 +307,8 @@ handle_event(Event, StateName, Data) ->
 handle_sync_event(cancel, _From, _StateName, #state { other = undefined } = S) ->
     notice(S, "cancelling trade, no other party to notify_cancel", []),
     {stop, normal, ok, S};
-handle_sync_event(cancel, _From, _StateName, S = #state { other = Other}) ->
-    notify_cancel(Other),
+handle_sync_event(cancel, _From, _StateName, S = #state { other = {OtherMod, OtherPid} }) ->
+    OtherMod:notify_cancel(OtherPid),
     notice(S, "cancelling trade, sending cancel event", []),
     {stop, normal, ok, S};
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
