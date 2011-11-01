@@ -58,40 +58,63 @@ do_commit(Pid) ->
 notify_cancel(Pid) ->
     call_in(Pid, cancel).
 
-call_in(_Pid, _Msg) ->
-    todo.
+call_in(_Pid, Msg) ->
+    trade_fsm_proper_controller ! {call_in, Msg}.
 
-expect(Msg) ->
-    expect(Msg, ?DEFAULT_TIMEOUT).
-
-expect(Msg, Timeout) ->
+expect_in(Ty) ->
+    R = make_ref(),
+    trade_fsm_proper_controller ! {expected, {self(), R}, Ty},
     receive
-        Msg ->
-            ok;
-        Other ->
-            {error, {unexpected, Other}}
-    after Timeout ->
-            {error, timeout}
+        {R, Reply} ->
+            Reply
     end.
+
+start_controller() ->
+    spawn_link(fun() ->
+                       register(trade_fsm_proper_controller, self()),
+                       loop()
+               end).
+
+stop_controller() ->
+    trade_fsm_proper_controller ! stop.
+
+expect({Reply, Tag}, ask_negotiate) ->
+    receive
+        {call_in, {ask_negotiate, _, trade_fsm_proper}} ->
+            Reply ! {Tag, ok};
+        {call_in, Other} ->
+            Reply ! {Tag, {error, {unexpected, Other}}}
+    after ?DEFAULT_TIMEOUT ->
+            Reply ! {Tag, {error, timeout}}
+    end.
+
+loop() ->
+    receive
+        stop ->
+            ok;
+        {expected, Reply, Ty} ->
+            expect(Reply, Ty)
+    end,
+    loop().
 
 do_connect() ->        
     ok = trade_fsm_controller:trade({trade_fsm_proper, trade_mock}),
-    expect({ask_negotiate, '_', trade_fsm_proper}).
+    expect_in(ask_negotiate).
 
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
 
 idle_wait(_S) ->
-    todo.
+    [].
 
 negotiate(_S) ->
-    todo.
+    [].
 
 ready(_S) ->
-    todo.
+    [].
 
 wait(_S) ->
-    todo.
+    [].
 
 next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S.
@@ -112,10 +135,14 @@ initial_state_data() ->
 
 
 start() ->
-    {ok, _} = trade_fsm_controller:start_link().
+    {ok, _} = trade_fsm_controller:start_link(),
+    start_controller(),
+    ok.
 
 stop() ->
-    ok = trade_fsm_controller:stop().
+    ok = trade_fsm_controller:stop(),
+    stop_controller(),
+    ok.
 
 prop_trade_fsm_correct() ->
     ?FORALL(Cmds, proper_fsm:commands(?MODULE),
