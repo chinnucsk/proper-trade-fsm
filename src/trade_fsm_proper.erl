@@ -21,7 +21,8 @@
          ask_commit/1, do_commit/1, notify_cancel/1]).
 
 -record(state, {}).
--define(DEFAULT_TIMEOUT, 5000).
+-define(DEFAULT_TIMEOUT, 1000).
+-define(LOG(X, Y), io:format(X, Y)).
 
 %% CALL-IN API from the trade_fsm
 ask_negotiate(Pid, Myself) ->
@@ -87,6 +88,7 @@ stop_controller() ->
 expect({Reply, Tag}, ask_negotiate) ->
     receive
         {call_in, {ask_negotiate, _, trade_fsm_proper}} ->
+            ?LOG("Controller got ask_negotiate\n", []),
             Reply ! {Tag, ok};
         {call_in, Other} ->
             Reply ! {Tag, {error, {unexpected, Other}}}
@@ -101,13 +103,18 @@ loop() ->
             unregister(trade_fsm_proper_controller),
             ok;
         {expected, Reply, Ty} ->
+            ?LOG("Expecting in controller: ~p\n", [Ty]),
             expect(Reply, Ty)
     end,
     loop().
 
 do_connect() ->        
+    ?LOG("Asking trade\n", []),
     ok = trade_fsm_controller:trade({trade_fsm_proper, trade_mock}),
-    expect_in(ask_negotiate).
+    ?LOG("Expecting ask_negotiate\n", []),
+    Reply = expect_in(ask_negotiate),
+    ?LOG("Reply from controller: ~p\n", [Reply]),
+    Reply.
 
 do_accept() ->
     trade_fsm_controller:accept_negotiate(trade_fsm_proper_controller),
@@ -139,16 +146,17 @@ next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
     S;
-next_state_data(negotiate, negotiate, S, Res, {call, _, _, _}) ->
+next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
     S.
 
 precondition(_, _, _, _) ->
     true.
 
 postcondition(idle, idle_wait, _S, {call, _, do_connect, _}, Res) ->
-    Res == ok;
-postcondition(_, _, _, _, _) ->
-    false.
+    ?LOG("Verifying postcondition: ~p: ~p\n", [Res, Res == ok]),
+    ok == Res;
+postcondition(_From, _Target, _State, {call, _, _, _}, Res) ->
+    Res == ok.
 
 initial_state() ->
     idle.
@@ -171,6 +179,10 @@ stop() ->
     ok = stop_controller(),
     ok.
 
+result_format(History, State, Result) ->
+    io:format("History: ~w\nState: ~w\nResult: ~w\n",
+              [History, State, Result]).
+
 prop_trade_fsm_correct() ->
     ?FORALL(Cmds, proper_fsm:commands(?MODULE),
             ?TRAPEXIT(
@@ -178,11 +190,10 @@ prop_trade_fsm_correct() ->
                 ok = start(),
                 {History, State, Result} = proper_fsm:run_commands(?MODULE, Cmds),
                 ok = stop(),
-                ?WHENFAIL(io:format("History: ~w\nState: ~w\nResult: ~w\n",
-                                    [History, State, Result]),
+                ?WHENFAIL(result_format(History, State, Result),
                           aggregate(zip(proper_fsm:state_names(History),
                                         command_names(Cmds)),
-                                    true))
+                                    Result =:= ok))
             end)).
 
 qc() ->
