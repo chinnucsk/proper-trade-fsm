@@ -139,7 +139,7 @@ next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
     S;
-next_state_data(negotiate, negotiate, S, ok, {call, _, _, _}) ->
+next_state_data(negotiate, negotiate, S, Res, {call, _, _, _}) ->
     S.
 
 precondition(_, _, _, _) ->
