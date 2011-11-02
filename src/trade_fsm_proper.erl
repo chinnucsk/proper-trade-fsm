@@ -13,7 +13,7 @@
          initial_state/0, initial_state_data/0]).
 
 %% Calls the Test system uses to carry out possible events
--export([do_connect/0]).
+-export([do_connect/0, do_accept/0, a_make_offer/0, b_make_offer/0]).
 
 %% Call in API for the trade_fsm
 -export([ask_negotiate/2, accept_negotiate/2, do_offer/2, undo_offer/2,
@@ -73,10 +73,16 @@ start_controller() ->
     spawn_link(fun() ->
                        register(trade_fsm_proper_controller, self()),
                        loop()
-               end).
+               end),
+    ok.
 
 stop_controller() ->
-    trade_fsm_proper_controller ! stop.
+    Ref = make_ref(),
+    trade_fsm_proper_controller ! {stop, Ref, self()},
+    receive
+        Ref ->
+            ok
+    end.
 
 expect({Reply, Tag}, ask_negotiate) ->
     receive
@@ -90,7 +96,9 @@ expect({Reply, Tag}, ask_negotiate) ->
 
 loop() ->
     receive
-        stop ->
+        {stop, Ref, Pid} ->
+            Pid ! Ref,
+            unregister(trade_fsm_proper_controller),
             ok;
         {expected, Reply, Ty} ->
             expect(Reply, Ty)
@@ -105,6 +113,12 @@ do_accept() ->
     trade_fsm_controller:accept_negotiate(trade_fsm_proper_controller),
     trade_fsm_controller:unblock().
 
+a_make_offer() ->
+    ok.
+
+b_make_offer() ->
+    ok.
+
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
 
@@ -112,7 +126,8 @@ idle_wait(_S) ->
     [{negotiate, {call, ?MODULE, do_accept, []}}].
 
 negotiate(_S) ->
-    [].
+    [{history, {call, ?MODULE, a_make_offer, [item()]}},
+     {history, {call, ?MODULE, b_make_offer, [item()]}}].
 
 ready(_S) ->
     [].
@@ -121,6 +136,10 @@ wait(_S) ->
     [].
 
 next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
+    S;
+next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
+    S;
+next_state_data(negotiate, negotiate, S, ok, {call, _, _, _}) ->
     S.
 
 precondition(_, _, _, _) ->
@@ -138,14 +157,18 @@ initial_state_data() ->
     #state{}.
 
 
+item() ->
+    oneof([horse, shotgun, boots, sword, shield, leggings, gstring]).
+
+
 start() ->
     {ok, _} = trade_fsm_controller:start_link(),
-    start_controller(),
+    ok = start_controller(),
     ok.
 
 stop() ->
     ok = trade_fsm_controller:stop(),
-    stop_controller(),
+    ok = stop_controller(),
     ok.
 
 prop_trade_fsm_correct() ->

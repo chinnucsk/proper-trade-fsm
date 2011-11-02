@@ -14,7 +14,9 @@
          stop/0,
          unblock/0, unblock/1,
          trade/1, accept_trade/0, make_offer/1,
-         retract_offer/1, ready/0, cancel/0]).
+         retract_offer/1, ready/0, cancel/0,
+
+         accept_negotiate/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -71,7 +73,7 @@ unblock(Timeout) ->
     call({unblock, Timeout}).
 
 stop() ->
-    cast(stop).
+    call(stop).
 
 %% API
 accept_negotiate(Other) ->
@@ -103,6 +105,10 @@ handle_call(ready, _From, #state { key = undefined } = State) ->
 handle_call({trade, Trader}, _From, #state { key = undefined } = State) ->
     Key = async_call(trade, [Trader], State),
     {reply, ok, State#state { key = Key } };
+handle_call(stop, From, State) ->
+    Reply = direct_call(cancel, [], State),
+    gen_fsm:reply(From, Reply),
+    {stop, normal, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
