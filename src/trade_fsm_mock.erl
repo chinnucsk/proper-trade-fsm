@@ -1,9 +1,17 @@
 -module(trade_fsm_mock).
+%% @doc Implement a fake trade_fsm
+%% The mocked/fake trade_fsm is a variant of the idea of the
+%% expect(1) system. We utilize the selective receive on the
+%% mailbox of a process to expect inbound calls towards it.
+%% This allows us to test behaviour of a trade_fsm by sending
+%% the trade_fsm under test messages and expecting it to reply
+%% in certain ways later on.
+%% @end
 
 %% Public API
 -export([start_link/0, stop/0, expect_in/1]).
 
-%% Call in API for the trade_fsm
+%% Call in API for the trade_fsm under test
 -export([ask_negotiate/2, accept_negotiate/2, do_offer/2, undo_offer/2,
          are_you_ready/1, not_yet/1, am_ready/1, ack_trans/1,
          ask_commit/1, do_commit/1, notify_cancel/1]).

@@ -2,6 +2,9 @@
 %%% @author Jesper Louis andersen <>
 %%% @copyright (C) 2011, Jesper Louis andersen
 %%% @doc Control a trade_fsm from the outside
+%%%   This module implements a trade_fsm controller which can steer a
+%%%   trade_fsm. The most prominent feature is that it converts
+%%%   blocking calls into future promises.
 %%% @end
 %%% Created : 31 Oct 2011 by Jesper Louis andersen <>
 %%%-------------------------------------------------------------------

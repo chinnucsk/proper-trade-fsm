@@ -1,4 +1,11 @@
+%% @doc trade_fsm from Learnyousomeerlang by Fred
+%% It has been altered by a functorization over whom
+%% to communicate with so we can hook up a mocked trade_fsm
+%% as the party to talk to.
+%% @end
 -module(trade_fsm).
+
+
 -behaviour(gen_fsm).
 
 %% public API
