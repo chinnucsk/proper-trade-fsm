@@ -16,7 +16,7 @@
          trade/1, accept_trade/0, make_offer/1,
          retract_offer/1, ready/0, cancel/0,
 
-         accept_negotiate/1]).
+         accept_negotiate/1, do_offer/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -76,8 +76,11 @@ stop() ->
     call(stop).
 
 %% API
-accept_negotiate(Other) ->
-    cast({accept_negotiate, Other}).
+accept_negotiate(Me) ->
+    cast({accept_negotiate, Me}).
+
+do_offer(Item) ->
+    cast({do_offer, Item}).
 
 %%%===================================================================
 
@@ -117,8 +120,12 @@ handle_call(_Request, _From, State) ->
 handle_cast({propagate, Cmd, Item}, State) ->
     direct_call(Cmd, [Item], State),
     {noreply, State};
-handle_cast({accept_negotiate, CallbackPid}, #state { fsm = Pid} = State) ->
-    trade_fsm:accept_negotiate(Pid, CallbackPid),
+handle_cast({accept_negotiate, Me}, #state { fsm = Pid} = State) ->
+    io:format("Firing accept_negotiate(~p, ~p)\n", [Pid, Me]),
+    trade_fsm:accept_negotiate(Pid, Me),
+    {noreply, State};
+handle_cast({make_offer, Item}, #state { fsm = Pid } = State) ->
+    trade_fsm:do_offer(Pid, Item),
     {noreply, State};
 handle_cast(stop, State) ->
     trade_fsm:stop(),
@@ -140,7 +147,8 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%%===================================================================
 async_call(F, Args, #state { fsm = Pid })
-  when is_pid(Pid) ->
+  when is_pid(Pid); is_atom(Pid) ->
+    io:format("Async Call: ~p\n", [F]),
     rpc:async_call(node(), ?TRADE_FSM, F, [Pid | Args]).
 
 direct_call(F, Args, #state { fsm = Pid })
@@ -151,5 +159,5 @@ call(M) ->
     gen_server:call(?MODULE, M, infinity).
 
 cast(M) ->
-    gen_server:call(?MODULE, M).
+    gen_server:cast(?MODULE, M).
 

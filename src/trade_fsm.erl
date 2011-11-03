@@ -32,7 +32,8 @@ start_link(Name) ->
 %% ask for a begin session. Returns when/if the other accepts
 trade(OwnPid, OtherPid) when is_pid(OtherPid) ->
     trade(OwnPid, {trade_fsm, OtherPid});
-trade(OwnPid, {Mod, Pid} = Other) when is_atom(Mod), is_pid(Pid) ->
+trade(OwnPid, {Mod, Pid} = Other) when is_atom(Mod), is_pid(Pid); is_atom(Pid) ->
+    io:format("Called trade_fsm:trade(..)\n", []),
     gen_fsm:sync_send_event(OwnPid, {negotiate, Other}, 30000).
 
 %% Accept someone's trade offer.
@@ -67,6 +68,7 @@ ask_negotiate(OtherPid, OwnPid) ->
 
 %% Forward the client message accepting the transaction
 accept_negotiate(OtherPid, OwnPid) ->
+    io:format("Firing accept_negotiate(~p, ~p)\n", [OtherPid, OwnPid]),
     gen_fsm:send_event(OtherPid, {accept_negotiate, OwnPid}).
 
 %% forward a client's offer
@@ -127,6 +129,7 @@ idle(Event, Data) ->
 %% trade call coming from the user. Forward to the other side,
 %% forward it and store the other's Pid
 idle({negotiate, {OtherMod, OtherPid}}, From, S=#state{}) ->
+    io:format("Calling: ~p:ask_negotiate(~p, self())", [OtherMod, OtherPid]),
     OtherMod:ask_negotiate(OtherPid, self()),
     notice(S, "asking user ~p for a trade", [OtherPid]),
     Ref = monitor(process, OtherPid),

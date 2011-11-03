@@ -13,19 +13,21 @@
          initial_state/0, initial_state_data/0]).
 
 %% Calls the Test system uses to carry out possible events
--export([do_connect/0, do_accept/0, a_make_offer/0, b_make_offer/0]).
+-export([do_connect/0, do_accept/0, a_make_offer/1, b_make_offer/1]).
 
 %% Call in API for the trade_fsm
 -export([ask_negotiate/2, accept_negotiate/2, do_offer/2, undo_offer/2,
          are_you_ready/1, not_yet/1, am_ready/1, ack_trans/1,
          ask_commit/1, do_commit/1, notify_cancel/1]).
 
--record(state, {}).
+-record(state, { a_items = [] :: [atom()],
+                 b_items = [] :: [atom()] }).
 -define(DEFAULT_TIMEOUT, 1000).
 -define(LOG(X, Y), io:format(X, Y)).
 
 %% CALL-IN API from the trade_fsm
 ask_negotiate(Pid, Myself) ->
+    ?LOG("Calling trade_fsm_proper:ask_negotiate/2\n", []),
     call_in(Pid, {ask_negotiate, Myself}).
 
 accept_negotiate(Pid, Myself) ->
@@ -59,17 +61,6 @@ do_commit(Pid) ->
 notify_cancel(Pid) ->
     call_in(Pid, cancel).
 
-call_in(_Pid, Msg) ->
-    trade_fsm_proper_controller ! {call_in, Msg}.
-
-expect_in(Ty) ->
-    R = make_ref(),
-    trade_fsm_proper_controller ! {expected, {self(), R}, Ty},
-    receive
-        {R, Reply} ->
-            Reply
-    end.
-
 start_controller() ->
     spawn_link(fun() ->
                        register(trade_fsm_proper_controller, self()),
@@ -85,16 +76,31 @@ stop_controller() ->
             ok
     end.
 
-expect({Reply, Tag}, ask_negotiate) ->
+call_in(_Pid, Msg) ->
+    trade_fsm_proper_controller ! {call_in, Msg}.
+
+expect_in(Ty) ->
+    R = make_ref(),
+    trade_fsm_proper_controller ! {expected, {self(), R}, Ty},
     receive
-        {call_in, {ask_negotiate, _, trade_fsm_proper}} ->
-            ?LOG("Controller got ask_negotiate\n", []),
-            Reply ! {Tag, ok};
-        {call_in, Other} ->
-            Reply ! {Tag, {error, {unexpected, Other}}}
+        {R, Reply} ->
+            Reply
+    end.
+
+expect({Reply, Tag}, Ty) ->
+    receive
+        {call_in, Msg} ->
+            Reply ! {Tag, handle_expect(Ty, Msg)}
     after ?DEFAULT_TIMEOUT ->
             Reply ! {Tag, {error, timeout}}
     end.
+
+handle_expect(ask_negotiate, {ask_negotiate, _}) ->
+    ok;
+handle_expect(do_offer, {do_offer, Item}) ->
+    {ok, Item};
+handle_expect(Ty, M) ->
+    {error, {unexpected, [{ty, Ty}, {msg, M}]}}.
 
 loop() ->
     receive
@@ -110,21 +116,31 @@ loop() ->
 
 do_connect() ->        
     ?LOG("Asking trade\n", []),
-    ok = trade_fsm_controller:trade({trade_fsm_proper, trade_mock}),
+    ok = trade_fsm_controller:trade({trade_fsm_proper, trade_fsm_proper_controller}),
     ?LOG("Expecting ask_negotiate\n", []),
     Reply = expect_in(ask_negotiate),
     ?LOG("Reply from controller: ~p\n", [Reply]),
     Reply.
 
 do_accept() ->
+    ?LOG("Accepting in Test Controller\n", []),
     trade_fsm_controller:accept_negotiate(trade_fsm_proper_controller),
-    trade_fsm_controller:unblock().
+    ?LOG("-->Unblocking SUT...\n", []),
+    R = case trade_fsm_controller:unblock() of
+            {value, ok} ->
+                ok;
+            Otherwise ->
+                Otherwise
+        end,
+    ?LOG("<--Unblocked!\n", []),
+    R.
 
-a_make_offer() ->
-    ok.
+a_make_offer(Item) ->
+    ok = trade_fsm_controller:make_offer(Item),
+    expect_in(do_offer).
 
-b_make_offer() ->
-    ok.
+b_make_offer(Item) ->
+    ok = trade_fsm_controller:do_offer(Item).
 
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
@@ -146,6 +162,12 @@ next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
     S;
+next_state_data(negotiate, negotiate,
+                #state { b_items = Items } = S, _, {call, _, a_make_offer, [Item]}) ->
+    S#state { b_items = [Item | Items] };
+next_state_data(negotiate, negotiate,
+                #state { a_items = Items } = S, _, {call, _, b_make_offer, [Item]}) ->
+    S#state { a_items = [Item | Items] };
 next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
     S.
 
@@ -154,6 +176,10 @@ precondition(_, _, _, _) ->
 
 postcondition(idle, idle_wait, _S, {call, _, do_connect, _}, Res) ->
     ?LOG("Verifying postcondition: ~p: ~p\n", [Res, Res == ok]),
+    ok == Res;
+postcondition(negotiate, negotiate, _S, {call, _, a_make_offer, [Item]}, Res) ->
+    {ok, Item} == Res;
+postcondition(negotiate, negotiate, _S, {call, _, b_make_offer, [_Item]}, Res) ->
     ok == Res;
 postcondition(_From, _Target, _State, {call, _, _, _}, Res) ->
     Res == ok.
@@ -197,5 +223,5 @@ prop_trade_fsm_correct() ->
             end)).
 
 qc() ->
-    proper:quickcheck(prop_trade_fsm_correct(), 5).
+    proper:quickcheck(prop_trade_fsm_correct(), 300).
 
