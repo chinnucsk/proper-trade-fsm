@@ -1,2 +1,3 @@
 *.beam
 /ebin/trade_fsm.app
+/deps
