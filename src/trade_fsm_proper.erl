@@ -13,7 +13,10 @@
          initial_state/0, initial_state_data/0]).
 
 %% Calls the Test system uses to carry out possible events
--export([do_connect/0, do_accept/0, a_make_offer/1, b_make_offer/1]).
+-export([do_connect/0, do_accept/0,
+
+         a_make_offer/1, b_make_offer/1,
+         a_retract_offer/1, b_retract_offer/1]).
 
 -record(state, { a_items = [] :: [atom()],
                  b_items = [] :: [atom()] }).
@@ -27,7 +30,7 @@ qc() ->
 
 %% Generators
 item() ->
-    oneof([horse, shotgun, boots, sword, shield, leggings, gstring]).
+    oneof([horse, shotgun, boots, sword, shield, leggings, gstring, book]).
 
 
 
@@ -55,12 +58,20 @@ do_accept() ->
 
 a_make_offer(Item) ->
     ok = trade_fsm_controller:make_offer(Item),
-    {ok, Reply} = ?MOCK:expect_in(do_offer),
+    {ok, Reply} = ?MOCK:expect_in({do_offer, Item}),
     Reply.
 
 b_make_offer(Item) ->
     ok = trade_fsm_controller:do_offer(Item).
 
+a_retract_offer(Item) ->
+    ok = trade_fsm_controller:retract_offer(Item),
+    {ok, Reply} = ?MOCK:expect_in({undo_offer, Item}),
+    Reply.
+
+b_retract_offer(Item) ->
+    trade_fsm_controller:undo_offer(Item).
+       
 %% QC FSM States
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
@@ -68,9 +79,11 @@ idle(_S) ->
 idle_wait(_S) ->
     [{negotiate, {call, ?MODULE, do_accept, []}}].
 
-negotiate(_S) ->
+negotiate(S) ->
     [{history, {call, ?MODULE, a_make_offer, [item()]}},
-     {history, {call, ?MODULE, b_make_offer, [item()]}}].
+     {history, {call, ?MODULE, b_make_offer, [item()]}},
+     {history, {call, ?MODULE, a_retract_offer, [elements(S#state.a_items)]}},
+     {history, {call, ?MODULE, b_retract_offer, [elements(S#state.b_items)]}}].
 
 ready(_S) ->
     [].
@@ -92,10 +105,16 @@ next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
     S;
 next_state_data(negotiate, negotiate,
                 #state { b_items = Items } = S, _, {call, _, a_make_offer, [Item]}) ->
-    S#state { b_items = [Item | Items] };
+    S#state { a_items = [Item | Items] };
 next_state_data(negotiate, negotiate,
                 #state { a_items = Items } = S, _, {call, _, b_make_offer, [Item]}) ->
-    S#state { a_items = [Item | Items] };
+    S#state { b_items = [Item | Items] };
+next_state_data(_, _,
+                #state { a_items = Items } = S, _, {call, _, a_retract_offer, [Item]}) ->
+    S#state { a_items = lists:delete(Item, Items) };
+next_state_data(_, _,
+                #state { b_items = Items } = S, _, {call, _, b_retract_offer, [Item]}) ->
+    S#state { b_items = lists:delete(Item, Items) };
 next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
     S.
 
@@ -110,6 +129,10 @@ postcondition(idle, idle_wait, _S, {call, _, do_connect, _}, Res) ->
 postcondition(negotiate, negotiate, _S, {call, _, a_make_offer, [Item]}, Res) ->
     {ok, Item} == Res;
 postcondition(negotiate, negotiate, _S, {call, _, b_make_offer, [_Item]}, Res) ->
+    ok == Res;
+postcondition(_, _, _S, {call, _, a_retract_offer, [_Item]}, Res) ->
+    ok == Res;
+postcondition(_, _, _S, {call, _, b_retract_offer, [_Item]}, Res) ->
     ok == Res;
 postcondition(_From, _Target, _State, {call, _, _, _}, Res) ->
     Res == ok.

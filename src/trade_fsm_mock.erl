@@ -101,8 +101,10 @@ expect({Reply, Tag}, Ty) ->
 
 handle_expect(ask_negotiate, {ask_negotiate, _}) ->
     ok;
-handle_expect(do_offer, {do_offer, Item}) ->
+handle_expect({do_offer, Item}, {do_offer, Item}) ->
     {ok, Item};
+handle_expect({undo_offer, Item}, {undo_offer, Item}) ->
+    ok;
 handle_expect(Ty, M) ->
     {error, {unexpected, [{ty, Ty}, {msg, M}]}}.
 
