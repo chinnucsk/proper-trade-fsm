@@ -21,7 +21,17 @@
 -define(LOG(X, Y), io:format(X, Y)).
 -define(MOCK, trade_fsm_mock).
 
+%% Call QuickCheck
+qc() ->
+    proper:quickcheck(prop_trade_fsm_correct(), 300).
 
+%% Generators
+item() ->
+    oneof([horse, shotgun, boots, sword, shield, leggings, gstring]).
+
+
+
+%% Operations we can do
 do_connect() ->        
     ?LOG("Asking trade\n", []),
     ok = trade_fsm_controller:trade({?MOCK, ?MOCK}),
@@ -51,6 +61,7 @@ a_make_offer(Item) ->
 b_make_offer(Item) ->
     ok = trade_fsm_controller:do_offer(Item).
 
+%% QC FSM States
 idle(_S) ->
     [{idle_wait, {call, ?MODULE, do_connect, []}}].
 
@@ -67,6 +78,14 @@ ready(_S) ->
 wait(_S) ->
     [].
 
+%% Initialization
+initial_state() ->
+    idle.
+
+initial_state_data() ->
+    #state{}.
+
+%% State data transitions (symbolic/concrete)
 next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
@@ -80,9 +99,11 @@ next_state_data(negotiate, negotiate,
 next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
     S.
 
+%% Precondition: When can a transition happen?
 precondition(_, _, _, _) ->
     true.
 
+%% Postcondition, not symbolic, testing properties
 postcondition(idle, idle_wait, _S, {call, _, do_connect, _}, Res) ->
     ?LOG("Verifying postcondition: ~p: ~p\n", [Res, Res == ok]),
     ok == Res;
@@ -93,17 +114,7 @@ postcondition(negotiate, negotiate, _S, {call, _, b_make_offer, [_Item]}, Res) -
 postcondition(_From, _Target, _State, {call, _, _, _}, Res) ->
     Res == ok.
 
-initial_state() ->
-    idle.
-
-initial_state_data() ->
-    #state{}.
-
-
-item() ->
-    oneof([horse, shotgun, boots, sword, shield, leggings, gstring]).
-
-
+%% Lifecycle
 start() ->
     {ok, _} = trade_fsm_controller:start_link(),
     ok = ?MOCK:start_link(),
@@ -114,6 +125,8 @@ stop() ->
     ok = ?MOCK:stop(),
     ok.
 
+
+%% Property test
 result_format(History, State, Result) ->
     io:format("History: ~w\nState: ~w\nResult: ~w\n",
               [History, State, Result]).
@@ -130,7 +143,3 @@ prop_trade_fsm_correct() ->
                                         command_names(Cmds)),
                                     Result =:= ok))
             end)).
-
-qc() ->
-    proper:quickcheck(prop_trade_fsm_correct(), 300).
-
