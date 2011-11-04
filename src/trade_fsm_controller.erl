@@ -18,8 +18,10 @@
          unblock/0, unblock/1,
          trade/1, accept_trade/0, make_offer/1,
          retract_offer/1, ready/0, cancel/0,
+         ask_negotiate/1,
 
-         accept_negotiate/1, do_offer/1, undo_offer/1]).
+         accept_negotiate/1, do_offer/1, undo_offer/1,
+         are_you_ready/0, not_yet/0, am_ready/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -79,6 +81,9 @@ stop() ->
     call(stop).
 
 %% API
+ask_negotiate(Me) ->
+    cast({ask_negotiate, Me}).
+
 accept_negotiate(Me) ->
     cast({accept_negotiate, Me}).
 
@@ -87,6 +92,15 @@ do_offer(Item) ->
 
 undo_offer(Item) ->
     cast({cast, {undo_offer, Item}}).
+
+are_you_ready() ->
+    cast({cast, are_you_ready}).
+
+not_yet() ->
+    cast({cast, not_yet}).
+
+am_ready() ->
+    cast({cast, not_yet}).
 
 %%%===================================================================
 
@@ -126,8 +140,10 @@ handle_call(_Request, _From, State) ->
 handle_cast({propagate, Cmd, Item}, State) ->
     direct_call(Cmd, [Item], State),
     {noreply, State};
+handle_cast({ask_negotiate, Me}, #state { fsm = Pid } = State) ->
+    trade_fsm:ask_negotiate(Pid, Me),
+    {noreply, State};
 handle_cast({accept_negotiate, Me}, #state { fsm = Pid} = State) ->
-    io:format("Firing accept_negotiate(~p, ~p)\n", [Pid, Me]),
     trade_fsm:accept_negotiate(Pid, Me),
     {noreply, State};
 handle_cast({cast, What}, #state { fsm = Pid } = State) ->
@@ -135,7 +151,13 @@ handle_cast({cast, What}, #state { fsm = Pid } = State) ->
         {do_offer, Item} ->
             trade_fsm:do_offer(Pid, Item);
         {undo_offer, Item} ->
-            trade_fsm:undo_offer(Pid, Item)
+            trade_fsm:undo_offer(Pid, Item);
+        are_you_ready ->
+            trade_fsm:are_you_ready(Pid);
+        not_yet ->
+            trade_fsm:not_yet(Pid);
+        am_ready ->
+            trade_fsm:am_ready(Pid)
     end,
     {noreply, State};
 handle_cast(stop, State) ->

@@ -48,7 +48,6 @@ expect_in(Ty) ->
             {error, Reason}
     end.
 
-
 %% CALL-IN API from the trade_fsm
 %% ----------------------------------------------------------------------
 ask_negotiate(Pid, Myself) ->
@@ -104,6 +103,8 @@ handle_expect(ask_negotiate, {ask_negotiate, _}) ->
 handle_expect({do_offer, Item}, {do_offer, Item}) ->
     {ok, Item};
 handle_expect({undo_offer, Item}, {undo_offer, Item}) ->
+    ok;
+handle_expect(Expected, Expected) ->
     ok;
 handle_expect(Ty, M) ->
     {error, {unexpected, [{ty, Ty}, {msg, M}]}}.

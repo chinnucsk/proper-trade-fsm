@@ -6,20 +6,26 @@
 
 %% Proper FSM API
 -export([qc/0]).
--export([idle/1, idle_wait/1, negotiate/1, ready/1, wait/1,
+-export([idle/1, idle_wait/1, idle_wait_b/1, negotiate/1, ready/1, wait/1,
          next_state_data/5,
          precondition/4,
          postcondition/5,
+         weight/3,
          initial_state/0, initial_state_data/0]).
 
 %% Calls the Test system uses to carry out possible events
--export([do_connect/0, do_accept/0,
+-export([a_do_connect/0, a_do_accept/0, b_do_connect/0, b_do_accept/0,
 
          a_make_offer/1, b_make_offer/1,
-         a_retract_offer/1, b_retract_offer/1]).
+         a_retract_offer/1, b_retract_offer/1,
+         a_ready/0, b_ready/0, a_not_yet/0, b_not_yet/0,
+         expect_a_ask_negotiate/0,
+
+         commit_transaction/0]).
 
 -record(state, { a_items = [] :: [atom()],
-                 b_items = [] :: [atom()] }).
+                 b_items = [] :: [atom()],
+                 a_blocked = false :: boolean() }).
 
 -define(LOG(X, Y), io:format(X, Y)).
 -define(MOCK, trade_fsm_mock).
@@ -33,18 +39,18 @@ item() ->
     oneof([horse, shotgun, boots, sword, shield, leggings, gstring, book]).
 
 
-
 %% Operations we can do
-do_connect() ->        
-    ?LOG("Asking trade\n", []),
-    ok = trade_fsm_controller:trade({?MOCK, ?MOCK}),
-    ?LOG("Expecting ask_negotiate\n", []),
-    {ok, Reply} = ?MOCK:expect_in(ask_negotiate),
-    ?LOG("Reply from controller: ~p\n", [Reply]),
-    Reply.
+a_do_connect() ->        
+    trade_fsm_controller:trade({?MOCK, ?MOCK}).
 
-do_accept() ->
-    ?LOG("Accepting in Test Controller\n", []),
+b_do_connect() ->
+    trade_fsm_controller:ask_negotiate(?MOCK).
+
+expect_a_ask_negotiate() ->
+    {ok, Reply} = ?MOCK:expect_in(ask_negotiate),
+    Reply.
+    
+b_do_accept() ->
     trade_fsm_controller:accept_negotiate(?MOCK),
     ?LOG("-->Unblocking SUT...\n", []),
     R = case trade_fsm_controller:unblock() of
@@ -56,6 +62,9 @@ do_accept() ->
     ?LOG("<--Unblocked!\n", []),
     R.
 
+a_do_accept() ->
+    trade_fsm_controller:accept_trade().
+            
 a_make_offer(Item) ->
     ok = trade_fsm_controller:make_offer(Item),
     {ok, Reply} = ?MOCK:expect_in({do_offer, Item}),
@@ -72,24 +81,79 @@ a_retract_offer(Item) ->
 b_retract_offer(Item) ->
     trade_fsm_controller:undo_offer(Item).
        
-%% QC FSM States
-idle(_S) ->
-    [{idle_wait, {call, ?MODULE, do_connect, []}}].
+a_ready() ->
+    trade_fsm_controller:ready(),
+    ok.
 
-idle_wait(_S) ->
-    [{negotiate, {call, ?MODULE, do_accept, []}}].
+a_not_yet() ->
+    {ok, Reply} = ?MOCK:expect_in(not_yet),
+    Reply.
 
-negotiate(S) ->
+b_not_yet() ->
+    trade_fsm_controller:not_yet().
+
+b_ready() ->
+    trade_fsm_controller:are_you_ready().
+
+commit_transaction() ->
+    ok.
+
+%% Transitions when A is allowed to manipulate items
+a_item_manipulation(S) ->
     [{history, {call, ?MODULE, a_make_offer, [item()]}},
-     {history, {call, ?MODULE, b_make_offer, [item()]}},
-     {history, {call, ?MODULE, a_retract_offer, [elements(S#state.a_items)]}},
+     {history, {call, ?MODULE, a_retract_offer, [elements(S#state.a_items)]}}].
+
+%% Transitions when B is allowed to manipulate items
+b_item_manipulation(S) ->
+    %% [{history, {call, ?MODULE, b_make_offer_unblock, [item()]}},
+    %%  {history, {call, ?MODULE, b_retract_offer_unblock, [elements(S#state.b_items)]}}] ++
+    [{history, {call, ?MODULE, b_make_offer, [item()]}},
      {history, {call, ?MODULE, b_retract_offer, [elements(S#state.b_items)]}}].
 
-ready(_S) ->
-    [].
+%% QC FSM States
 
-wait(_S) ->
-    [].
+%% The state when the test FSM is idle
+idle(_S) ->
+    [{history, {call, ?MODULE, a_do_connect, []}}] ++
+    [{idle_wait, {call, ?MODULE, expect_a_ask_negotiate, []}}] ++
+    [{idle_wait_b, {call, ?MODULE, b_do_connect, []}}].
+
+%% Special idle_wait state for the cross-case
+idle_wait_b(_S) ->
+    [{negotiate, {call, ?MODULE, expect_a_ask_negotiate, []}},
+     {negotiate, {call, ?MODULE, a_do_accept, []}}].
+
+%% "Normal" idle_wait state
+idle_wait(_S) ->
+    [{negotiate, {call, ?MODULE, b_do_accept, []}}] ++
+    [{negotiate, {call, ?MODULE, a_do_accept, []}}].
+
+%% Important thing to figure out:
+%%   How can we leave the negotiate state? We can get to wait, but how
+%%   about the ready state directly?
+%%  IMPORTANT: Check sync/async rules!
+negotiate(S) ->
+    a_item_manipulation(S) ++
+    b_item_manipulation(S) ++ [].
+%%        [{history, {call, ?MODULE, a_ready, []}},
+%%         {history, {call, ?MODULE, b_not_yet, []}},
+%%         {wait,    {call, ?MODULE, b_ready, []}}].
+
+
+%% Consider splitting this into: a waits and b waits. It might be easier to
+%% model than keeping a state on the wait/block state of a.
+wait(S) ->
+    %% Needs states here where 'a' is ready!
+    %% Needs a precondition on a_not_yet/0 it must fire based on 'a's state
+    [{history,    {call, ?MODULE, expect_a_not_yet, []}},
+     {ready,      {call, ?MODULE, expect_a_am_ready, []}},
+     {history,    {call, ?MODULE, a_ready, []}},
+     {ready,      {call, ?MODULE, b_am_ready, []}}] ++
+        a_item_manipulation(S).
+
+ready(_S) ->
+    [{history, {call, ?MODULE, commit_transaction, []}}].
+
 
 %% Initialization
 initial_state() ->
@@ -99,6 +163,8 @@ initial_state_data() ->
     #state{}.
 
 %% State data transitions (symbolic/concrete)
+next_state_data(_, _, S, _Res, {call, _, a_do_connect, _}) ->
+    S#state { a_blocked = true };
 next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
@@ -108,17 +174,44 @@ next_state_data(negotiate, negotiate,
     S#state { a_items = [Item | Items] };
 next_state_data(negotiate, negotiate,
                 #state { a_items = Items } = S, _, {call, _, b_make_offer, [Item]}) ->
-    S#state { b_items = [Item | Items] };
+    S#state { b_items = [Item | Items], a_blocked = false };
 next_state_data(_, _,
                 #state { a_items = Items } = S, _, {call, _, a_retract_offer, [Item]}) ->
     S#state { a_items = lists:delete(Item, Items) };
 next_state_data(_, _,
                 #state { b_items = Items } = S, _, {call, _, b_retract_offer, [Item]}) ->
-    S#state { b_items = lists:delete(Item, Items) };
+    S#state { b_items = lists:delete(Item, Items), a_blocked = false };
+next_state_data(_, _, S, _Res, {call, _, a_ready, _}) ->
+    S#state { a_blocked = true };
+next_state_data(negotiate, ready, S, _Res, {call, _, _, _}) ->
+    S;
+next_state_data(ready, ready, S, _Res, {call, _, commit_transaction, _}) ->
+    S;
 next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
+    S;
+next_state_data(_, _, S, _, _) ->
     S.
 
+
 %% Precondition: When can a transition happen?
+
+%% A can only accept when it is not blocked
+precondition(_, _, S, {call, _, a_do_accept, _}) ->
+    not S#state.a_blocked;
+%% A may only connect when it is not blocked
+precondition(idle, idle, S, {call, _, a_do_connect, _}) ->
+    not S#state.a_blocked;
+%% May only expect ask_negotiate if A is blocked
+precondition(_, _, S, {call, _, expect_a_ask_negotiate, _}) ->
+    S#state.a_blocked;
+precondition(negotiate, negotiate, #state { a_blocked = false}, {call, _, a_make_offer, _}) -> true;
+precondition(negotiate, negotiate, #state { a_blocked = true}, {call, _, a_make_offer,_}) -> false;
+precondition(negotiate, negotiate, #state { a_blocked = false}, {call, _, a_retract_offer, _}) -> true;
+precondition(negotiate, negotiate, #state { a_blocked = true}, {call, _, a_retract_offer,_}) -> false;
+precondition(negotiate, negotiate, #state { a_blocked = false}, {call, _, a_ready, _}) -> true;
+precondition(negotiate, negotiate, #state { a_blocked = true}, {call, _, a_ready, _}) -> false;
+precondition(negotiate, negotiate, #state { a_blocked = false}, {call, _, b_not_yet, _}) -> false;
+precondition(negotiate, negotiate, #state { a_blocked = true}, {call, _, b_not_yet, _}) -> true;
 precondition(_, _, _, _) ->
     true.
 
@@ -149,6 +242,9 @@ stop() ->
     ok.
 
 
+weight(_, _, {call, _, commit_transaction, _}) -> 1;
+weight(_, _, _) -> 3.
+    
 %% Property test
 result_format(History, State, Result) ->
     io:format("History: ~w\nState: ~w\nResult: ~w\n",
