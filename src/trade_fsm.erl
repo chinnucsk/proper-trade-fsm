@@ -18,7 +18,7 @@
          idle/2, idle/3, idle_wait/2, idle_wait/3, negotiate/2,
          negotiate/3, wait/2, ready/2, ready/3]).
 
--export([ask_negotiate/2, accept_negotiate/2, do_offer/2, undo_offer/2,
+-export([ask_negotiate/2, ask_negotiate/3, accept_negotiate/2, do_offer/2, undo_offer/2,
          are_you_ready/1, not_yet/1, am_ready/1, ack_trans/1,
          ask_commit/1, do_commit/1, notify_cancel/1]).
 
@@ -71,7 +71,10 @@ cancel(OwnPid) ->
 
 %% Ask the other FSM for a trade session
 ask_negotiate(OtherPid, OwnPid) ->
-    gen_fsm:send_event(OtherPid, {ask_negotiate, OwnPid, ?MODULE}).
+    ask_negotiate(OtherPid, OwnPid, ?MODULE).
+
+ask_negotiate(OtherPid, OwnPid, OwnMod) ->
+    gen_fsm:send_event(OtherPid, {ask_negotiate, OwnPid, OwnMod}).
 
 %% Forward the client message accepting the transaction
 accept_negotiate(OtherPid, OwnPid) ->

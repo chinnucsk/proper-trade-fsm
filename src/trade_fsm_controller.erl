@@ -18,7 +18,7 @@
          unblock/0, unblock/1,
          trade/1, accept_trade/0, make_offer/1,
          retract_offer/1, ready/0, cancel/0,
-         ask_negotiate/1,
+         ask_negotiate/2,
 
          accept_negotiate/1, do_offer/1, undo_offer/1,
          are_you_ready/0, not_yet/0, am_ready/0]).
@@ -81,8 +81,8 @@ stop() ->
     call(stop).
 
 %% API
-ask_negotiate(Me) ->
-    cast({ask_negotiate, Me}).
+ask_negotiate(Me, Mod) ->
+    cast({ask_negotiate, Me, Mod}).
 
 accept_negotiate(Me) ->
     cast({accept_negotiate, Me}).
@@ -140,8 +140,8 @@ handle_call(_Request, _From, State) ->
 handle_cast({propagate, Cmd, Item}, State) ->
     direct_call(Cmd, [Item], State),
     {noreply, State};
-handle_cast({ask_negotiate, Me}, #state { fsm = Pid } = State) ->
-    trade_fsm:ask_negotiate(Pid, Me),
+handle_cast({ask_negotiate, Me, Mod}, #state { fsm = Pid } = State) ->
+    trade_fsm:ask_negotiate(Pid, Me, Mod),
     {noreply, State};
 handle_cast({accept_negotiate, Me}, #state { fsm = Pid} = State) ->
     trade_fsm:accept_negotiate(Pid, Me),

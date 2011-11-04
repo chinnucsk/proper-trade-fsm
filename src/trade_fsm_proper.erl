@@ -14,12 +14,12 @@
          initial_state/0, initial_state_data/0]).
 
 %% Calls the Test system uses to carry out possible events
--export([a_do_connect/0, a_do_accept/0, b_do_connect/0, b_do_accept/0,
+-export([a_trade/0, a_do_accept/0, b_trade/0, b_do_accept/0,
 
          a_make_offer/1, b_make_offer/1,
          a_retract_offer/1, b_retract_offer/1,
          a_ready/0, b_ready/0, a_not_yet/0, b_not_yet/0,
-         expect_a_ask_negotiate/0,
+         expect_a_ask_negotiate/0, expect_a_ask_negotiate_unblock/0,
 
          commit_transaction/0]).
 
@@ -40,18 +40,22 @@ item() ->
 
 
 %% Operations we can do
-a_do_connect() ->        
+a_trade() ->        
     trade_fsm_controller:trade({?MOCK, ?MOCK}).
 
-b_do_connect() ->
-    trade_fsm_controller:ask_negotiate(?MOCK).
+b_trade() ->
+    trade_fsm_controller:ask_negotiate(?MOCK, ?MOCK).
 
 expect_a_ask_negotiate() ->
     {ok, Reply} = ?MOCK:expect_in(ask_negotiate),
     Reply.
     
-b_do_accept() ->
-    trade_fsm_controller:accept_negotiate(?MOCK),
+expect_a_ask_negotiate_unblock() ->
+    R1 = expect_a_ask_negotiate(),
+    R2 = unblock(),
+    {R1, R2}.
+
+unblock() ->
     ?LOG("-->Unblocking SUT...\n", []),
     R = case trade_fsm_controller:unblock() of
             {value, ok} ->
@@ -61,6 +65,10 @@ b_do_accept() ->
         end,
     ?LOG("<--Unblocked!\n", []),
     R.
+    
+b_do_accept() ->
+    trade_fsm_controller:accept_negotiate(?MOCK),
+    unblock().
 
 a_do_accept() ->
     trade_fsm_controller:accept_trade().
@@ -114,13 +122,13 @@ b_item_manipulation(S) ->
 
 %% The state when the test FSM is idle
 idle(_S) ->
-    [{history, {call, ?MODULE, a_do_connect, []}}] ++
+    [{history, {call, ?MODULE, a_trade, []}}] ++
     [{idle_wait, {call, ?MODULE, expect_a_ask_negotiate, []}}] ++
-    [{idle_wait_b, {call, ?MODULE, b_do_connect, []}}].
+    [{idle_wait_b, {call, ?MODULE, b_trade, []}}].
 
 %% Special idle_wait state for the cross-case
 idle_wait_b(_S) ->
-    [{negotiate, {call, ?MODULE, expect_a_ask_negotiate, []}},
+    [{negotiate, {call, ?MODULE, expect_a_ask_negotiate_unblock, []}},
      {negotiate, {call, ?MODULE, a_do_accept, []}}].
 
 %% "Normal" idle_wait state
@@ -163,9 +171,9 @@ initial_state_data() ->
     #state{}.
 
 %% State data transitions (symbolic/concrete)
-next_state_data(_, _, S, _Res, {call, _, a_do_connect, _}) ->
+next_state_data(_, _, S, _Res, {call, _, a_trade, _}) ->
     S#state { a_blocked = true };
-next_state_data(idle, idle_wait, S, _Res, {call, _, do_connect, _}) ->
+next_state_data(idle, idle_wait, S, _Res, {call, _, trade, _}) ->
     S;
 next_state_data(idle_wait, negotiate, S, _Res, {call, _, do_accept, _}) ->
     S;
@@ -189,6 +197,8 @@ next_state_data(ready, ready, S, _Res, {call, _, commit_transaction, _}) ->
     S;
 next_state_data(negotiate, negotiate, S, _Res, {call, _, _, _}) ->
     S;
+next_state_data(_, _, S, _Res, {call, _, expect_a_ask_negotiate_unblock, _}) ->
+    S#state { a_blocked = false };
 next_state_data(_, _, S, _, _) ->
     S.
 
@@ -199,10 +209,12 @@ next_state_data(_, _, S, _, _) ->
 precondition(_, _, S, {call, _, a_do_accept, _}) ->
     not S#state.a_blocked;
 %% A may only connect when it is not blocked
-precondition(idle, idle, S, {call, _, a_do_connect, _}) ->
+precondition(idle, idle, S, {call, _, a_trade, _}) ->
     not S#state.a_blocked;
 %% May only expect ask_negotiate if A is blocked
 precondition(_, _, S, {call, _, expect_a_ask_negotiate, _}) ->
+    S#state.a_blocked;
+precondition(_, _, S, {call, _, expect_a_ask_negotiate_unblock, _}) ->
     S#state.a_blocked;
 precondition(negotiate, negotiate, #state { a_blocked = false}, {call, _, a_make_offer, _}) -> true;
 precondition(negotiate, negotiate, #state { a_blocked = true}, {call, _, a_make_offer,_}) -> false;
@@ -216,7 +228,7 @@ precondition(_, _, _, _) ->
     true.
 
 %% Postcondition, not symbolic, testing properties
-postcondition(idle, idle_wait, _S, {call, _, do_connect, _}, Res) ->
+postcondition(idle, idle_wait, _S, {call, _, trade, _}, Res) ->
     ?LOG("Verifying postcondition: ~p: ~p\n", [Res, Res == ok]),
     ok == Res;
 postcondition(negotiate, negotiate, _S, {call, _, a_make_offer, [Item]}, Res) ->
