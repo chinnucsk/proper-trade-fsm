@@ -36,8 +36,9 @@ qc() ->
 
 %% Generators
 item() ->
-    oneof([horse, shotgun, boots, sword, shield, leggings, gstring, book]).
-
+    oneof([horse, shotgun, boots, sword, shield, leggings,
+           gstring, book, leash, collar, japanese_girl,
+           railgun]).
 
 %% Operations we can do
 a_trade() ->        
