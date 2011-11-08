@@ -175,6 +175,14 @@ idle_wait(accept_negotiate, _From, S=#state{other={OtherMod, OtherPid}}) ->
     OtherMod:accept_negotiate(OtherPid, self()),
     notice(S, "accepting negotiation", []),
     {reply, ok, negotiate, S};
+%% Suppose both parties asked for a trade at the same time. If the other trade_fsm
+%% comes first, then an `{ask_negotiate, _}' has moved us here. We now should act
+%% as if we have accepted the trade.
+idle_wait({negotiate, {OtherMod, OtherPid}}, _From, #state { other = {OtherMod,
+                                                                      OtherPid }} = S) ->
+    OtherMod:accept_negotiate(OtherPid, self()),
+    notice(S, "cross-accepting negotiation", []),
+    {reply, ok, negotiate, S};
 idle_wait(Event, _From, Data) ->
     unexpected(Event, idle_wait, Data),
     {next_state, idle_wait, Data}.
