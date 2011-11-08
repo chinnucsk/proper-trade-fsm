@@ -112,6 +112,7 @@ init([]) ->
 %% @private
 handle_call({unblock, Timeout}, _From, #state { key = K } = State) ->
     Reply = rpc:nb_yield(K, Timeout),
+    io:format("unblock on ~p with value ~p", [K, Reply]),
     {reply, Reply, State#state { key = case Reply of
                                            timeout -> K;
                                            {value, _} -> undefined
