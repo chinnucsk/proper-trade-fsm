@@ -98,6 +98,8 @@ expect({Reply, Tag}, Ty) ->
             Reply ! {Tag, {error, timeout}}
     end.
 
+handle_expect(accept_negotiate, {accept_negotiate, _}) ->
+    ok;
 handle_expect(ask_negotiate, {ask_negotiate, _}) ->
     ok;
 handle_expect({do_offer, Item}, {do_offer, Item}) ->

@@ -72,7 +72,9 @@ b_do_accept() ->
     unblock().
 
 a_do_accept() ->
-    trade_fsm_controller:accept_trade().
+    trade_fsm_controller:accept_trade(),
+    {ok, Reply} = ?MOCK:expect_in(accept_negotiate),
+    Reply.
             
 a_make_offer(Item) ->
     ok = trade_fsm_controller:make_offer(Item),
