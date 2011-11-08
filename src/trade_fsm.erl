@@ -133,7 +133,7 @@ idle({ask_negotiate, OtherPid, OtherMod}, S=#state{}) ->
     notice(S, "~p asked for a trade negotiation", [OtherPid]),
     {next_state, idle_wait, S#state{other={OtherMod, OtherPid}, monitor=Ref}};
 idle(Event, Data) ->
-    unexpected(Event, idle),
+    unexpected(Event, idle, Data),
     {next_state, idle, Data}.
 
 %% trade call coming from the user. Forward to the other side,
@@ -146,7 +146,7 @@ idle({negotiate, {OtherMod, OtherPid}}, From, S=#state{}) ->
     {next_state, idle_wait, S#state{other={OtherMod, OtherPid},
                                     monitor=Ref, from=From}};
 idle(Event, _From, Data) ->
-    unexpected(Event, idle),
+    unexpected(Event, idle, Data),
     {next_state, idle, Data}.
 
 %% idle_wait allows to expect replies from the other side and
@@ -166,7 +166,7 @@ idle_wait({accept_negotiate, OtherPid}, #state { other = {_, OtherPid } } = S) -
     {next_state, negotiate, S};
 %% different call from someone else. Not supported! Let it die.
 idle_wait(Event, Data) ->
-    unexpected(Event, idle_wait),
+    unexpected(Event, idle_wait, Data),
     {next_state, idle_wait, Data}.
 
 %% Our own client has decided to accept the transaction.
@@ -176,7 +176,7 @@ idle_wait(accept_negotiate, _From, S=#state{other={OtherMod, OtherPid}}) ->
     notice(S, "accepting negotiation", []),
     {reply, ok, negotiate, S};
 idle_wait(Event, _From, Data) ->
-    unexpected(Event, idle_wait),
+    unexpected(Event, idle_wait, Data),
     {next_state, idle_wait, Data}.
 
 %% own side offering an item
@@ -210,7 +210,7 @@ negotiate(are_you_ready, S=#state{other={OtherMod, OtherPid}}) ->
     OtherMod:not_yet(OtherPid),
     {next_state, negotiate, S};
 negotiate(Event, Data) ->
-    unexpected(Event, negotiate),
+    unexpected(Event, negotiate, Data),
     {next_state, negotiate, Data}.
 
 %% own user mentioning he is ready. Next state should be wait
@@ -221,7 +221,7 @@ negotiate(ready, From, S = #state{other = {OtherMod, OtherPid}}) ->
     notice(S, "asking if ready, waiting", []),
     {next_state, wait, S#state{from=From}};
 negotiate(Event, _From, S) ->
-    unexpected(Event, negotiate),
+    unexpected(Event, negotiate, S),
     {next_state, negotiate, S}.
 
 %% other side offering an item. Don't forget our client is still
@@ -261,7 +261,7 @@ wait('ready!', S=#state{ other = {OtherMod, OtherPid} }) ->
     notice(S, "other side is ready. Moving to ready state", []),
     {next_state, ready, S};
 wait(Event, Data) ->
-    unexpected(Event, wait),
+    unexpected(Event, wait, Data),
     {next_state, wait, Data}.
 
 %% Ready state with the acknowledgement message coming from the
@@ -289,7 +289,7 @@ ready(ack, S=#state{ other = {OtherMod, OtherPid} }) ->
             {next_state, ready, S}
     end;
 ready(Event, Data) ->
-    unexpected(Event, ready),
+    unexpected(Event, ready, Data),
     {next_state, ready, Data}.
 
 %% We weren't the ones to initiate the commit.
@@ -303,7 +303,7 @@ ready(do_commit, _From, S) ->
     commit(S),
     {stop, normal, ok, S};
 ready(Event, _From, Data) ->
-    unexpected(Event, ready),
+    unexpected(Event, ready, Data),
     {next_state, ready, Data}.
 
 %% This cancel event has been sent by the other player
@@ -312,7 +312,7 @@ handle_event(cancel, _StateName, S=#state{}) ->
     notice(S, "received cancel event", []),
     {stop, normal, S};
 handle_event(Event, StateName, Data) ->
-    unexpected(Event, StateName),
+    unexpected(Event, StateName, Data),
     {next_state, StateName, Data}.
 
 %% This cancel event comes from the client. We must warn the other
@@ -326,7 +326,7 @@ handle_sync_event(cancel, _From, _StateName, S = #state { other = {OtherMod, Oth
     {stop, normal, ok, S};
 %% Note: DO NOT reply to unexpected calls. Let the call-maker crash!
 handle_sync_event(Event, _From, StateName, Data) ->
-    unexpected(Event, StateName),
+    unexpected(Event, StateName, Data),
     {next_state, StateName, Data}.
 
 %% The other player's FSM has gone down. We have
@@ -335,7 +335,7 @@ handle_info({'DOWN', Ref, process, Pid, Reason}, _, S=#state{other=Pid, monitor=
     notice(S, "Other side dead", []),
     {stop, {other_down, Reason}, S};
 handle_info(Info, StateName, Data) ->
-    unexpected(Info, StateName),
+    unexpected(Info, StateName, Data),
     {next_state, StateName, Data}.
 
 code_change(_OldVsn, StateName, Data, _Extra) ->
@@ -363,9 +363,9 @@ notice(#state{name=N}, Str, Args) ->
     io:format("~s: "++Str++"~n", [N|Args]).
 
 %% Unexpected allows to log unexpected messages
-unexpected(Msg, State) ->
-    io:format("~p received unknown event ~p while in state ~p~n",
-              [self(), Msg, State]).
+unexpected(Msg, StateName, State) ->
+    io:format("~p (~p) received unknown event ~p while in state ~p~n",
+              [State#state.name, self(), Msg, StateName]).
 
 %% This function allows two processes to make a synchronous call to each
 %% other by electing one Pid to do it. Both processes call it and it
