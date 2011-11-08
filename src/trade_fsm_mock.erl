@@ -98,6 +98,15 @@ expect({Reply, Tag}, Ty) ->
             Reply ! {Tag, {error, timeout}}
     end.
 
+handle_expect([], M) ->
+    {error, {exhausted_options, {msg, M}}};
+handle_expect([Ty | Rest], M) ->
+    case handle_expect(Ty, M) of
+        ok ->
+            ok;
+        {error, _Reason} ->
+            handle_expect(Rest, M)
+    end;
 handle_expect(accept_negotiate, {accept_negotiate, _}) ->
     ok;
 handle_expect(ask_negotiate, {ask_negotiate, _}) ->
