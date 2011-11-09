@@ -32,7 +32,7 @@
 
 -record(state, {
           fsm = undefined :: undefined | pid(),
-          key = undefined :: undefined | pid() }).
+          key = undefined :: undefined | pid() | {reply, term()} }).
 
 %%%===================================================================
 
@@ -110,9 +110,11 @@ init([]) ->
     {ok, #state{ fsm = Pid }}.
 
 %% @private
-handle_call({unblock, Timeout}, _From, #state { key = K } = State) ->
+handle_call({unblock, _Timeout}, _From, #state { key = {reply, R} } = State) ->
+    {reply, R, State#state { key = undefined }};
+handle_call({unblock, Timeout}, _From, #state { key = K } = State) when is_pid(K) ->
     Reply = rpc:nb_yield(K, Timeout),
-    io:format("unblock on ~p with value ~p", [K, Reply]),
+    io:format("unblock on ~p with value ~p\n", [K, Reply]),
     {reply, Reply, State#state { key = case Reply of
                                            timeout -> K;
                                            {value, _} -> undefined
@@ -168,7 +170,10 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_info(_Info, State) ->
+handle_info({Key, {promise_reply, R}}, #state { key = Key } = S) ->
+    {noreply, S#state { key = {reply, R} }};
+handle_info(Info, State) ->
+    io:format("WARNING, UNKOWN HANDLE_INFO: ~p\n", [Info]),
     {noreply, State}.
 
 %% @private
@@ -182,8 +187,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 async_call(F, Args, #state { fsm = Pid })
   when is_pid(Pid); is_atom(Pid) ->
-    io:format("Async Call: ~p\n", [F]),
-    rpc:async_call(node(), ?TRADE_FSM, F, [Pid | Args]).
+    K = rpc:async_call(node(), ?TRADE_FSM, F, [Pid | Args]),
+    io:format("Async Call: ~p key = ~p\n", [F, K]),
+    K.
 
 direct_call(F, Args, #state { fsm = Pid })
   when is_pid(Pid) ->
