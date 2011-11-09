@@ -19,7 +19,7 @@
          a_make_offer/1, b_make_offer/1,
          a_retract_offer/1, b_retract_offer/1,
          a_ready/0, b_ready/0, a_not_yet/0, b_not_yet/0,
-         expect_a_ask_accept_negotiate/0, expect_a_ask_accept_negotiate_unblock/0,
+         expect_a_ask_negotiate/0, expect_a_ask_accept_negotiate_unblock/0,
 
          commit_transaction/0]).
 
@@ -47,18 +47,18 @@ a_trade() ->
 b_trade() ->
     trade_fsm_controller:ask_negotiate(?MOCK, ?MOCK).
 
-expect_a_ask_accept_negotiate() ->
-    {ok, Reply} = ?MOCK:expect_in([ask_negotiate, accept_negotiate]),
+expect_a_ask_negotiate() ->
+    {ok, Reply} = ?MOCK:expect_in(ask_negotiate),
     Reply.
-    
+
 expect_a_ask_accept_negotiate_unblock() ->
-    R1 = expect_a_ask_accept_negotiate(),
-    R2 = unblock(),
-    case {R1, R2} of
-        {ok, ok} ->
-            ok;
-        Otherwise ->
-            Otherwise
+    case ?MOCK:expect_in([ask_negotiate, accept_negotiate]) of
+        {ok, ask_negotiate} ->
+            io:format("Ask negotiate\n"),
+            b_do_accept();
+        {ok, accept_negotiate} ->
+            io:format("Accept negotiate\n"),
+            unblock()
     end.
 
 unblock() ->
@@ -130,9 +130,10 @@ b_item_manipulation(S) ->
 
 %% The state when the test FSM is idle
 idle(_S) ->
-    [{history, {call, ?MODULE, a_trade, []}}] ++
-    [{idle_wait, {call, ?MODULE, expect_a_ask_accept_negotiate, []}}] ++
-    [{idle_wait_b, {call, ?MODULE, b_trade, []}}].
+    [{history,     {call, ?MODULE, a_trade, []}},
+     {idle_wait,   {call, ?MODULE, expect_a_ask_negotiate, []}}].
+
+%%     {idle_wait_b, {call, ?MODULE, b_trade, []}}].
 
 %% Special idle_wait state for the cross-case
 idle_wait_b(_S) ->
@@ -141,8 +142,9 @@ idle_wait_b(_S) ->
 
 %% "Normal" idle_wait state
 idle_wait(_S) ->
-    [{negotiate, {call, ?MODULE, b_do_accept, []}}] ++
-    [{negotiate, {call, ?MODULE, a_do_accept, []}}].
+    [{negotiate, {call, ?MODULE, b_do_accept, []}}].
+
+%%    [{negotiate, {call, ?MODULE, a_do_accept, []}}].
 
 %% Important thing to figure out:
 %%   How can we leave the negotiate state? We can get to wait, but how
@@ -220,7 +222,7 @@ precondition(_, _, S, {call, _, a_do_accept, _}) ->
 precondition(idle, idle, S, {call, _, a_trade, _}) ->
     not S#state.a_blocked;
 %% May only expect ask_negotiate if A is blocked
-precondition(_, _, S, {call, _, expect_a_ask_accept_negotiate, _}) ->
+precondition(_, _, S, {call, _, expect_a_ask_negotiate, _}) ->
     S#state.a_blocked;
 precondition(_, _, S, {call, _, expect_a_ask_accept_negotiate_unblock, _}) ->
     S#state.a_blocked;

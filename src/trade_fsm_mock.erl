@@ -51,7 +51,7 @@ expect_in(Ty) ->
 %% CALL-IN API from the trade_fsm
 %% ----------------------------------------------------------------------
 ask_negotiate(Pid, Myself) ->
-    ?LOG("Calling trade_fsm_proper:ask_negotiate/2\n", []),
+    ?LOG("Calling trade_fsm_mock:ask_negotiate/2\n", []),
     call_in(Pid, {ask_negotiate, Myself}).
 
 accept_negotiate(Pid, Myself) ->
@@ -103,7 +103,7 @@ handle_expect([], M) ->
 handle_expect([Ty | Rest], M) ->
     case handle_expect(Ty, M) of
         ok ->
-            ok;
+            Ty;
         {error, _Reason} ->
             handle_expect(Rest, M)
     end;
